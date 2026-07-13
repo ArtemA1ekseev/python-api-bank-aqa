@@ -6,6 +6,6 @@ class User(BaseModel):
     role: str
 
 
-class LoginUserResponce(BaseModel):
+class LoginUserResponse(BaseModel):
     token: str
     user: User
