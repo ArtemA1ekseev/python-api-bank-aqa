@@ -6,7 +6,7 @@ from requests import Response
 
 from src.main.api.models.account_transfer_request import AccountTransferRequest
 from src.main.api.models.account_transfer_response import AccountTransferResponse
-from src.main.api.requests.requester import GetRequester, PostRequester
+from src.main.api.requests.requester import PostRequester
 
 
 class AccountTransferRequester(PostRequester):
