@@ -1,7 +1,22 @@
 import uuid
 
-import requests
 import pytest
+
+from src.main.api.models.account_deposit_request import AccountDepositRequest
+from src.main.api.models.create_credit_request import CreateCreditRequest
+from src.main.api.models.create_user_request import CreateUserRequest
+from src.main.api.models.credit_repay_request import CreditRepayRequest
+from src.main.api.models.login_user_request import LoginUserRequest
+from src.main.api.requests.account_deposit_requester import AccountDepositRequester
+from src.main.api.requests.account_transactions_requester import AccountTransactionsRequester
+from src.main.api.requests.create_account_requester import CreateAccountRequester
+from src.main.api.requests.create_credit_requester import CreateCreditRequester
+from src.main.api.requests.create_user_requester import CreateUserRequester
+from src.main.api.requests.credit_history_requester import CreditHistoryRequester
+from src.main.api.requests.credit_repay_requester import CreditRepayRequester
+from src.main.api.requests.login_user_requester import LoginUserRequester
+from src.main.api.specs.request_specs import RequestSpecs
+from src.main.api.specs.response_specs import ResponseSpecs
 
 
 @pytest.mark.api
@@ -15,522 +30,283 @@ class TestBankCredit:
         ]
     )
     def test_account_credit_request_valid(self, credit_amount, term_months):
-        login_admin_response = requests.post(
-            url='http://localhost:4111/api/auth/token/login',
-            json={
-                "username": "admin",
-                "password": "123456"
-            },
-            headers={
-                'accept': 'application/json',
-                'Content-Type': 'application/json'
-            }
-        )
-
-        assert login_admin_response.status_code == 200
-        token_admin = login_admin_response.json().get('token')
-        assert token_admin is not None
-
         username = f"Max{uuid.uuid4().hex[:8]}"
 
-        create_user_response = requests.post(
-            url="http://localhost:4111/api/admin/create",
-            json={
-                "username": username,
-                "password": "Pas!sw0rd",
-                "role": "ROLE_CREDIT_SECRET"
-            },
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f'Bearer {token_admin}'
-            }
-        )
+        create_user_request = CreateUserRequest(username=username, password='Pas!sw0rd', role='ROLE_CREDIT_SECRET')
 
-        assert create_user_response.status_code == 200
+        CreateUserRequester(
+            request_spec=RequestSpecs.auth_headers(username='admin', password='123456'),
+            response_spec=ResponseSpecs.request_ok()
+        ).post(create_user_request)
 
-        login_user_response = requests.post(
-            url='http://localhost:4111/api/auth/token/login',
-            json={
-                "username": username,
-                "password": "Pas!sw0rd",
-            },
-            headers={
-                'accept': 'application/json',
-                'Content-Type': 'application/json'
-            }
-        )
+        login_user_request = LoginUserRequest(username=username, password='Pas!sw0rd')
 
-        assert login_user_response.status_code == 200
-        token_user = login_user_response.json().get('token')
-        assert token_user is not None
+        LoginUserRequester(
+            request_spec=RequestSpecs.unauth_headers(),
+            response_spec=ResponseSpecs.request_ok()
+        ).post(login_user_request)
 
-        response_create_account = requests.post(
-            url='http://localhost:4111/api/account/create',
-            headers={
-                'accept': 'application/json',
-                "Authorization": f'Bearer {token_user}'
-            }
-        )
+        response_create_account = CreateAccountRequester(
+            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
+            response_spec=ResponseSpecs.requests_created()
+        ).post()
 
-        assert response_create_account.status_code == 201
-        id_account = response_create_account.json().get('id')
+        id_account = response_create_account.id
         assert id_account is not None
 
-        response_credit_request = requests.post(
-            url='http://localhost:4111/api/credit/request',
-            json={
-                "accountId": id_account,
-                "amount": credit_amount,
-                "termMonths": term_months
-            },
-            headers={
-                'accept': 'application/json',
-                'Authorization': f'Bearer {token_user}',
-                'Content-Type': 'application/json'
-            }
-        )
+        response_credit_request = CreateCreditRequest(accountId=id_account, amount=credit_amount,
+                                                      termMonths=term_months)
 
-        assert response_credit_request.status_code == 201
-        id_credit = response_credit_request.json().get('creditId')
+        response_create_credit = CreateCreditRequester(
+            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
+            response_spec=ResponseSpecs.requests_created()
+        ).post(response_credit_request)
+
+        id_credit = response_create_credit.creditId
         assert id_credit is not None
+        assert response_create_credit.id == id_account
+        assert response_create_credit.amount == pytest.approx(credit_amount)
+        assert response_create_credit.termMonths == term_months
+        assert response_create_credit.balance == pytest.approx(credit_amount)
 
-        response_credit_history = requests.get(
-            url='http://localhost:4111/api/credit/history',
-            headers={
-                'accept': 'application/json',
-                'Authorization': f'Bearer {token_user}',
-            }
-        )
+        response_credit_history = CreditHistoryRequester(
+            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
+            response_spec=ResponseSpecs.request_ok()
+        ).get()
 
-        assert response_credit_history.status_code == 200
+        assert response_credit_history.userId is not None
 
-        response_body = response_credit_history.json()
-        assert response_body["userId"] is not None
-        credits = response_body["credits"]
+        credits = response_credit_history.credits
         assert len(credits) == 1
+
         credit = credits[0]
-        assert credit["creditId"] == id_credit
-        assert credit["accountId"] == id_account
-        assert credit["amount"] == credit_amount
-        assert credit["termMonths"] == term_months
-        assert credit["balance"] == -credit_amount
-        assert credit["createdAt"] is not None
+        assert credit.creditId == id_credit
+        assert credit.accountId == id_account
+        assert credit.amount == pytest.approx(credit_amount)
+        assert credit.termMonths == term_months
+        assert credit.balance == pytest.approx(-credit_amount)
+        assert credit.createdAt is not None
 
-        response_account = requests.get(
-            url=f"http://localhost:4111/api/account/transactions/{id_account}",
-            headers={
-                "accept": "application/json",
-                "Authorization": f"Bearer {token_user}"
-            }
-        )
+        response_account_transactions = AccountTransactionsRequester(
+            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
+            response_spec=ResponseSpecs.request_ok()
+        ).get(id_account)
 
-        assert response_account.status_code == 200
+        assert response_account_transactions.id == id_account
+        assert response_account_transactions.number is not None
+        assert response_account_transactions.balance == pytest.approx(credit_amount)
 
-        account = response_account.json()
-        assert account["id"] == id_account
-        assert account["number"] is not None
-        assert account["balance"] == credit_amount
-        transactions = account["transactions"]
+        transactions = response_account_transactions.transactions
         assert len(transactions) == 1
+
         transaction = transactions[0]
-        assert transaction["transactionId"] is not None
-        assert transaction["type"] == "credit_issuance"
-        assert transaction["amount"] == credit_amount
-        assert transaction["fromAccountId"] is None
-        assert transaction["toAccountId"] == id_account
-        assert transaction["createdAt"] is not None
+        assert transaction.transactionId is not None
+        assert transaction.type == "credit_issuance"
+        assert transaction.amount == pytest.approx(credit_amount)
+        assert transaction.fromAccountId is None
+        assert transaction.toAccountId == id_account
+        assert transaction.createdAt is not None
 
     def test_account_credit_request_invalid_second_credit_while_active(self):
-        login_admin_response = requests.post(
-            url='http://localhost:4111/api/auth/token/login',
-            json={
-                "username": "admin",
-                "password": "123456"
-            },
-            headers={
-                'accept': 'application/json',
-                'Content-Type': 'application/json'
-            }
-        )
-
-        assert login_admin_response.status_code == 200
-        token_admin = login_admin_response.json().get('token')
-        assert token_admin is not None
-
         username = f"Max{uuid.uuid4().hex[:8]}"
 
-        create_user_response = requests.post(
-            url="http://localhost:4111/api/admin/create",
-            json={
-                "username": username,
-                "password": "Pas!sw0rd",
-                "role": "ROLE_CREDIT_SECRET"
-            },
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f'Bearer {token_admin}'
-            }
-        )
+        create_user_request = CreateUserRequest(username=username, password='Pas!sw0rd', role='ROLE_CREDIT_SECRET')
 
-        assert create_user_response.status_code == 200
+        CreateUserRequester(
+            request_spec=RequestSpecs.auth_headers(username='admin', password='123456'),
+            response_spec=ResponseSpecs.request_ok()
+        ).post(create_user_request)
 
-        login_user_response = requests.post(
-            url='http://localhost:4111/api/auth/token/login',
-            json={
-                "username": username,
-                "password": "Pas!sw0rd"
-            },
-            headers={
-                'accept': 'application/json',
-                'Content-Type': 'application/json'
-            }
-        )
+        login_user_request = LoginUserRequest(username=username, password='Pas!sw0rd')
 
-        assert login_user_response.status_code == 200
-        token_user = login_user_response.json().get('token')
-        assert token_user is not None
+        LoginUserRequester(
+            request_spec=RequestSpecs.unauth_headers(),
+            response_spec=ResponseSpecs.request_ok()
+        ).post(login_user_request)
 
-        response_create_account_first = requests.post(
-            url='http://localhost:4111/api/account/create',
-            headers={
-                'accept': 'application/json',
-                "Authorization": f'Bearer {token_user}'
-            }
-        )
+        response_create_account_first = CreateAccountRequester(
+            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
+            response_spec=ResponseSpecs.requests_created()
+        ).post()
 
-        assert response_create_account_first.status_code == 201
-        id_account_first = response_create_account_first.json().get('id')
+        id_account_first = response_create_account_first.id
         assert id_account_first is not None
 
-        response_create_account_second = requests.post(
-            url='http://localhost:4111/api/account/create',
-            headers={
-                'accept': 'application/json',
-                "Authorization": f'Bearer {token_user}'
-            }
-        )
+        response_create_account_second = CreateAccountRequester(
+            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
+            response_spec=ResponseSpecs.requests_created()
+        ).post()
 
-        assert response_create_account_second.status_code == 201
-        id_account_second = response_create_account_second.json().get('id')
+        id_account_second = response_create_account_second.id
         assert id_account_second is not None
 
-        response_credit_request_first = requests.post(
-            url='http://localhost:4111/api/credit/request',
-            json={
-                "accountId": id_account_first,
-                "amount": 5000,
-                "termMonths": 12
-            },
-            headers={
-                'accept': 'application/json',
-                'Authorization': f'Bearer {token_user}',
-                'Content-Type': 'application/json'
-            }
-        )
+        response_credit_request_first = CreateCreditRequest(accountId=id_account_first, amount=5000,
+                                                            termMonths=12)
 
-        assert response_credit_request_first.status_code == 201
+        CreateCreditRequester(
+            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
+            response_spec=ResponseSpecs.requests_created()
+        ).post(response_credit_request_first)
 
-        response_credit_request_second = requests.post(
-            url='http://localhost:4111/api/credit/request',
-            json={
-                "accountId": id_account_second,
-                "amount": 5000,
-                "termMonths": 12
-            },
-            headers={
-                'accept': 'application/json',
-                'Authorization': f'Bearer {token_user}',
-                'Content-Type': 'application/json'
-            }
-        )
+        response_credit_request_second = CreateCreditRequest(accountId=id_account_second, amount=5000,
+                                                             termMonths=12)
 
-        assert response_credit_request_second.status_code == 404
+        CreateCreditRequester(
+            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
+            response_spec=ResponseSpecs.not_found()
+        ).post(response_credit_request_second)
 
-        response_credit_history = requests.get(
-            url='http://localhost:4111/api/credit/history',
-            headers={
-                'accept': 'application/json',
-                'Authorization': f'Bearer {token_user}'
-            }
-        )
+        response_credit_history = CreditHistoryRequester(
+            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
+            response_spec=ResponseSpecs.request_ok()
+        ).get()
 
-        assert response_credit_history.status_code == 200
-        credits = response_credit_history.json()["credits"]
-        assert len(credits) == 1
-        assert credits[0]["accountId"] == id_account_first
+        assert len(response_credit_history.credits) == 1
+        assert response_credit_history.credits[0].accountId == id_account_first
 
     def test_account_credit_repay_valid(self):
-        login_admin_response = requests.post(
-            url='http://localhost:4111/api/auth/token/login',
-            json={
-                "username": "admin",
-                "password": "123456"
-            },
-            headers={
-                'accept': 'application/json',
-                'Content-Type': 'application/json'
-            }
-        )
-
-        assert login_admin_response.status_code == 200
-        token_admin = login_admin_response.json().get('token')
-        assert token_admin is not None
-
         username = f"Max{uuid.uuid4().hex[:8]}"
 
-        create_user_response = requests.post(
-            url="http://localhost:4111/api/admin/create",
-            json={
-                "username": username,
-                "password": "Pas!sw0rd",
-                "role": "ROLE_CREDIT_SECRET"
-            },
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f'Bearer {token_admin}'
-            }
-        )
+        create_user_request = CreateUserRequest(username=username, password='Pas!sw0rd', role='ROLE_CREDIT_SECRET')
 
-        assert create_user_response.status_code == 200
+        CreateUserRequester(
+            request_spec=RequestSpecs.auth_headers(username='admin', password='123456'),
+            response_spec=ResponseSpecs.request_ok()
+        ).post(create_user_request)
 
-        login_user_response = requests.post(
-            url='http://localhost:4111/api/auth/token/login',
-            json={
-                "username": username,
-                "password": "Pas!sw0rd",
-            },
-            headers={
-                'accept': 'application/json',
-                'Content-Type': 'application/json'
-            }
-        )
+        login_user_request = LoginUserRequest(username=username, password='Pas!sw0rd')
 
-        assert login_user_response.status_code == 200
-        token_user = login_user_response.json().get('token')
-        assert token_user is not None
+        LoginUserRequester(
+            request_spec=RequestSpecs.unauth_headers(),
+            response_spec=ResponseSpecs.request_ok()
+        ).post(login_user_request)
 
-        response_create_account = requests.post(
-            url='http://localhost:4111/api/account/create',
-            headers={
-                'accept': 'application/json',
-                "Authorization": f'Bearer {token_user}'
-            }
-        )
+        response_create_account = CreateAccountRequester(
+            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
+            response_spec=ResponseSpecs.requests_created()
+        ).post()
 
-        assert response_create_account.status_code == 201
-        id_account = response_create_account.json().get('id')
+        id_account = response_create_account.id
         assert id_account is not None
 
-        response_credit_request = requests.post(
-            url='http://localhost:4111/api/credit/request',
-            json={
-                "accountId": id_account,
-                "amount": 9000,
-                "termMonths": 12
-            },
-            headers={
-                'accept': 'application/json',
-                'Authorization': f'Bearer {token_user}',
-                'Content-Type': 'application/json'
-            }
-        )
+        response_credit_request = CreateCreditRequest(accountId=id_account, amount=9000,
+                                                      termMonths=12)
 
-        assert response_credit_request.status_code == 201
-        id_credit = response_credit_request.json().get('creditId')
+        response_create_credit = CreateCreditRequester(
+            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
+            response_spec=ResponseSpecs.requests_created()
+        ).post(response_credit_request)
+
+        id_credit = response_create_credit.creditId
         assert id_credit is not None
 
-        response_deposit = requests.post(
-            url='http://localhost:4111/api/account/deposit',
-            json={
-                "accountId": id_account,
-                "amount": 9000.0
-            },
-            headers={
-                'accept': 'application/json',
-                'Authorization': f'Bearer {token_user}',
-                'Content-Type': 'application/json'
-            }
-        )
+        account_deposit_request = AccountDepositRequest(accountId=id_account, amount=9000.0)
 
-        assert response_deposit.status_code == 200
+        AccountDepositRequester(
+            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
+            response_spec=ResponseSpecs.request_ok()
+        ).post(account_deposit_request)
 
-        response_credit_repay = requests.post(
-            url='http://localhost:4111/api/credit/repay',
-            json={
-                "creditId": id_credit,
-                "accountId": id_account,
-                "amount": 9000
-            },
-            headers={
-                'accept': 'application/json',
-                'Authorization': f'Bearer {token_user}',
-                'Content-Type': 'application/json'
-            }
-        )
+        credit_repay_request = CreditRepayRequest(creditId=id_credit, accountId=id_account, amount=9000)
 
-        assert response_credit_repay.status_code == 200
-        assert response_credit_repay.json().get('amountDeposited') == 9000
-        assert response_credit_repay.json().get('creditId') == id_credit
+        response_credit_repay = CreditRepayRequester(
+            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
+            response_spec=ResponseSpecs.request_ok()
+        ).post(credit_repay_request)
 
-        response_get_transaction = requests.get(
-            url=f'http://localhost:4111/api/account/transactions/{id_account}',
-            headers={
-                'accept': 'application/json',
-                'Authorization': f'Bearer {token_user}',
-            }
-        )
+        assert response_credit_repay.amountDeposited == 9000
+        assert response_credit_repay.creditId == id_credit
 
-        assert response_get_transaction.status_code == 200
-        response_body = response_get_transaction.json()
-        assert response_body["balance"] == 9000
+        response_account_transactions = AccountTransactionsRequester(
+            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
+            response_spec=ResponseSpecs.request_ok()
+        ).get(id_account)
 
-        response_credit_history = requests.get(
-            url='http://localhost:4111/api/credit/history',
-            headers={
-                'accept': 'application/json',
-                'Authorization': f'Bearer {token_user}',
-            }
-        )
+        assert response_account_transactions.balance == pytest.approx(9000)
 
-        assert response_credit_history.status_code == 200
-        credits = response_credit_history.json()["credits"]
-        assert len(credits) == 1
-        credit = credits[0]
-        assert credit["creditId"] == id_credit
-        assert credit["balance"] == 0
-
-        transactions = response_body["transactions"]
+        transactions = response_account_transactions.transactions
         assert len(transactions) == 3
 
-        repayment_transactions = [t for t in transactions if t["type"] == "credit_repayment"]
+        repayment_transactions = [t for t in transactions if t.type == "credit_repayment"]
         assert len(repayment_transactions) == 1
+
         repayment = repayment_transactions[0]
-        assert repayment["amount"] == -9000
-        assert repayment["fromAccountId"] == id_account
-        assert repayment["toAccountId"] is None
-        assert repayment["creditId"] == id_credit
-        assert repayment["transactionId"] is not None
-        assert repayment["createdAt"] is not None
+        assert repayment.amount == pytest.approx(-9000)
+        assert repayment.fromAccountId == id_account
+        assert repayment.toAccountId is None
+        assert repayment.transactionId is not None
+        assert repayment.createdAt is not None
+
+        response_credit_history = CreditHistoryRequester(
+            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
+            response_spec=ResponseSpecs.request_ok()
+        ).get()
+
+        credits = response_credit_history.credits
+        assert len(credits) == 1
+
+        credit = credits[0]
+        assert credit.creditId == id_credit
+        assert credit.balance == pytest.approx(0)
 
     def test_account_credit_repay_invalid_partial_amount(self):
-        login_admin_response = requests.post(
-            url='http://localhost:4111/api/auth/token/login',
-            json={
-                "username": "admin",
-                "password": "123456"
-            },
-            headers={
-                'accept': 'application/json',
-                'Content-Type': 'application/json'
-            }
-        )
-
-        assert login_admin_response.status_code == 200
-        token_admin = login_admin_response.json().get('token')
-        assert token_admin is not None
-
         username = f"Max{uuid.uuid4().hex[:8]}"
 
-        create_user_response = requests.post(
-            url="http://localhost:4111/api/admin/create",
-            json={
-                "username": username,
-                "password": "Pas!sw0rd",
-                "role": "ROLE_CREDIT_SECRET"
-            },
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f'Bearer {token_admin}'
-            }
-        )
+        create_user_request = CreateUserRequest(username=username, password='Pas!sw0rd', role='ROLE_CREDIT_SECRET')
 
-        assert create_user_response.status_code == 200
+        CreateUserRequester(
+            request_spec=RequestSpecs.auth_headers(username='admin', password='123456'),
+            response_spec=ResponseSpecs.request_ok()
+        ).post(create_user_request)
 
-        login_user_response = requests.post(
-            url='http://localhost:4111/api/auth/token/login',
-            json={
-                "username": username,
-                "password": "Pas!sw0rd"
-            },
-            headers={
-                'accept': 'application/json',
-                'Content-Type': 'application/json'
-            }
-        )
+        login_user_request = LoginUserRequest(username=username, password='Pas!sw0rd')
 
-        assert login_user_response.status_code == 200
-        token_user = login_user_response.json().get('token')
-        assert token_user is not None
+        LoginUserRequester(
+            request_spec=RequestSpecs.unauth_headers(),
+            response_spec=ResponseSpecs.request_ok()
+        ).post(login_user_request)
 
-        response_create_account = requests.post(
-            url='http://localhost:4111/api/account/create',
-            headers={
-                'accept': 'application/json',
-                "Authorization": f'Bearer {token_user}'
-            }
-        )
+        response_create_account = CreateAccountRequester(
+            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
+            response_spec=ResponseSpecs.requests_created()
+        ).post()
 
-        assert response_create_account.status_code == 201
-        id_account = response_create_account.json().get('id')
+        id_account = response_create_account.id
         assert id_account is not None
 
-        response_credit_request = requests.post(
-            url='http://localhost:4111/api/credit/request',
-            json={
-                "accountId": id_account,
-                "amount": 9000,
-                "termMonths": 12
-            },
-            headers={
-                'accept': 'application/json',
-                'Authorization': f'Bearer {token_user}',
-                'Content-Type': 'application/json'
-            }
-        )
+        response_credit_request = CreateCreditRequest(accountId=id_account, amount=9000,
+                                                      termMonths=12)
 
-        assert response_credit_request.status_code == 201
-        id_credit = response_credit_request.json().get('creditId')
+        response_create_credit = CreateCreditRequester(
+            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
+            response_spec=ResponseSpecs.requests_created()
+        ).post(response_credit_request)
+
+        id_credit = response_create_credit.creditId
         assert id_credit is not None
 
-        response_deposit = requests.post(
-            url='http://localhost:4111/api/account/deposit',
-            json={
-                "accountId": id_account,
-                "amount": 9000.0
-            },
-            headers={
-                'accept': 'application/json',
-                'Authorization': f'Bearer {token_user}',
-                'Content-Type': 'application/json'
-            }
-        )
+        account_deposit_request = AccountDepositRequest(accountId=id_account, amount=9000.0)
 
-        assert response_deposit.status_code == 200
+        AccountDepositRequester(
+            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
+            response_spec=ResponseSpecs.request_ok()
+        ).post(account_deposit_request)
 
-        response_credit_repay = requests.post(
-            url='http://localhost:4111/api/credit/repay',
-            json={
-                "creditId": id_credit,
-                "accountId": id_account,
-                "amount": 4000
-            },
-            headers={
-                'accept': 'application/json',
-                'Authorization': f'Bearer {token_user}',
-                'Content-Type': 'application/json'
-            }
-        )
+        credit_repay_request = CreditRepayRequest(creditId=id_credit, accountId=id_account, amount=4000)
 
-        assert response_credit_repay.status_code == 422
+        CreditRepayRequester(
+            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
+            response_spec=ResponseSpecs.unprocessable_entity()
+        ).post(credit_repay_request)
 
-        response_credit_history = requests.get(
-            url='http://localhost:4111/api/credit/history',
-            headers={
-                'accept': 'application/json',
-                'Authorization': f'Bearer {token_user}'
-            }
-        )
+        response_credit_history = CreditHistoryRequester(
+            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
+            response_spec=ResponseSpecs.request_ok()
+        ).get()
 
-        assert response_credit_history.status_code == 200
-        credit = response_credit_history.json()["credits"][0]
-        assert credit["balance"] == -9000
+        credits = response_credit_history.credits
+        assert len(credits) == 1
+
+        credit = credits[0]
+        assert credit.creditId == id_credit
+        assert credit.balance == pytest.approx(-9000)
