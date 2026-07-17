@@ -1,7 +1,11 @@
 from pathlib import Path
 from typing import Any
 
-
+"""
+Этот класс нужен для того, чтобы один раз прочитать файл resources/urls.properties
+Singleton
+В программе всегда существует только один объект.
+"""
 class Config:
     _isinstance = None
     _dictionary = {}

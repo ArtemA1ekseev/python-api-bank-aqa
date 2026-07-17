@@ -1,18 +1,7 @@
-import uuid
 import pytest
 
 from src.main.api.models.account_deposit_request import AccountDepositRequest
 from src.main.api.models.account_transfer_request import AccountTransferRequest
-from src.main.api.models.create_user_request import CreateUserRequest
-from src.main.api.models.login_user_request import LoginUserRequest
-from src.main.api.requests.account_deposit_requester import AccountDepositRequester
-from src.main.api.requests.account_transactions_requester import AccountTransactionsRequester
-from src.main.api.requests.account_transfer_requester import AccountTransferRequester
-from src.main.api.requests.create_account_requester import CreateAccountRequester
-from src.main.api.requests.create_user_requester import CreateUserRequester
-from src.main.api.requests.login_user_requester import LoginUserRequester
-from src.main.api.specs.request_specs import RequestSpecs
-from src.main.api.specs.response_specs import ResponseSpecs
 
 
 @pytest.mark.api
@@ -26,51 +15,24 @@ class TestBankAccount:
             9000
         ]
     )
-    def test_bank_account_deposit_valid(self, deposit_amount):
-        username = f"Max{uuid.uuid4().hex[:8]}"
+    def test_bank_account_deposit_valid(self, api_manager, create_user_request, deposit_amount):
+        api_manager.admin_steps.login_user(create_user_request)
 
-        create_user_request = CreateUserRequest(username=username, password='Pas!sw0rd', role='ROLE_USER')
-
-        CreateUserRequester(
-            request_spec=RequestSpecs.auth_headers(username='admin', password='123456'),
-            response_spec=ResponseSpecs.request_ok()
-        ).post(create_user_request)
-
-        login_user_request = LoginUserRequest(username=username, password='Pas!sw0rd')
-
-        LoginUserRequester(
-            request_spec=RequestSpecs.unauth_headers(),
-            response_spec=ResponseSpecs.request_ok()
-        ).post(login_user_request)
-
-        response_create_account = CreateAccountRequester(
-            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
-            response_spec=ResponseSpecs.requests_created()
-        ).post()
-
+        response_create_account = api_manager.user_steps.create_account(create_user_request)
         id_account = response_create_account.id
         assert id_account is not None
 
         account_deposit_request = AccountDepositRequest(accountId=id_account, amount=deposit_amount)
+        api_manager.user_steps.account_deposit(create_user_request, account_deposit_request)
 
-        AccountDepositRequester(
-            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
-            response_spec=ResponseSpecs.request_ok()
-        ).post(account_deposit_request)
+        response_account_transactions = api_manager.user_steps.get_transactions(create_user_request, id_account)
 
-        response_get_transactions = AccountTransactionsRequester(
-            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
-            response_spec=ResponseSpecs.request_ok()
-        ).get(id_account)
-
-        assert response_get_transactions.balance == deposit_amount
-
-        transactions = response_get_transactions.transactions
+        assert response_account_transactions.balance == pytest.approx(deposit_amount)
+        transactions = response_account_transactions.transactions
         assert len(transactions) == 1
-
         transaction = transactions[0]
         assert transaction.type == "deposit"
-        assert transaction.amount == deposit_amount
+        assert transaction.amount == pytest.approx(deposit_amount)
         assert transaction.toAccountId == id_account
         assert transaction.transactionId is not None
         assert transaction.createdAt is not None
@@ -87,45 +49,20 @@ class TestBankAccount:
             10000
         ]
     )
-    def test_bank_account_deposit_invalid_amount_below_minimum(self, invalid_amount):
-        username = f"Max{uuid.uuid4().hex[:8]}"
+    def test_bank_account_deposit_invalid_amount(self, api_manager, create_user_request, invalid_amount):
+        api_manager.admin_steps.login_user(create_user_request)
 
-        create_user_request = CreateUserRequest(username=username, password='Pas!sw0rd', role='ROLE_USER')
-
-        CreateUserRequester(
-            request_spec=RequestSpecs.auth_headers(username='admin', password='123456'),
-            response_spec=ResponseSpecs.request_ok()
-        ).post(create_user_request)
-
-        login_user_request = LoginUserRequest(username=username, password='Pas!sw0rd')
-
-        LoginUserRequester(
-            request_spec=RequestSpecs.unauth_headers(),
-            response_spec=ResponseSpecs.request_ok()
-        ).post(login_user_request)
-
-        response_create_account = CreateAccountRequester(
-            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
-            response_spec=ResponseSpecs.requests_created()
-        ).post()
-
+        response_create_account = api_manager.user_steps.create_account(create_user_request)
         id_account = response_create_account.id
         assert id_account is not None
 
         account_deposit_request = AccountDepositRequest(accountId=id_account, amount=invalid_amount)
+        api_manager.user_steps.account_deposit_invalid(create_user_request, account_deposit_request)
 
-        AccountDepositRequester(
-            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
-            response_spec=ResponseSpecs.request_bad()
-        ).post(account_deposit_request)
+        response_account_transactions = api_manager.user_steps.get_transactions(create_user_request, id_account)
 
-        response_get_transactions = AccountTransactionsRequester(
-            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
-            response_spec=ResponseSpecs.request_ok()
-        ).get(id_account)
-
-        assert response_get_transactions.balance == 0
-        assert len(response_get_transactions.transactions) == 0
+        assert response_account_transactions.balance == 0
+        assert len(response_account_transactions.transactions) == 0
 
     @pytest.mark.parametrize(
         "deposit_amount, transfer_amount",
@@ -135,59 +72,25 @@ class TestBankAccount:
             (9000, 9000),
         ]
     )
-    def test_bank_account_transfer_valid(self, deposit_amount, transfer_amount):
-        username = f"Max{uuid.uuid4().hex[:8]}"
+    def test_bank_account_transfer_valid(self, api_manager, create_user_request, deposit_amount, transfer_amount):
+        api_manager.admin_steps.login_user(create_user_request)
 
-        create_user_request = CreateUserRequest(username=username, password='Pas!sw0rd', role='ROLE_USER')
-
-        CreateUserRequester(
-            request_spec=RequestSpecs.auth_headers(username='admin', password='123456'),
-            response_spec=ResponseSpecs.request_ok()
-        ).post(create_user_request)
-
-        login_user_request = LoginUserRequest(username=username, password='Pas!sw0rd')
-
-        LoginUserRequester(
-            request_spec=RequestSpecs.unauth_headers(),
-            response_spec=ResponseSpecs.request_ok()
-        ).post(login_user_request)
-
-        response_create_account_first = CreateAccountRequester(
-            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
-            response_spec=ResponseSpecs.requests_created()
-        ).post()
-
+        response_create_account_first = api_manager.user_steps.create_account(create_user_request)
         id_account_first = response_create_account_first.id
         assert id_account_first is not None
 
-        response_create_account_second = CreateAccountRequester(
-            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
-            response_spec=ResponseSpecs.requests_created()
-        ).post()
-
+        response_create_account_second = api_manager.user_steps.create_account(create_user_request)
         id_account_second = response_create_account_second.id
         assert id_account_second is not None
 
         account_deposit_request = AccountDepositRequest(accountId=id_account_first, amount=deposit_amount)
-
-        AccountDepositRequester(
-            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
-            response_spec=ResponseSpecs.request_ok()
-        ).post(account_deposit_request)
+        api_manager.user_steps.account_deposit(create_user_request, account_deposit_request)
 
         account_transfer_request = AccountTransferRequest(fromAccountId=id_account_first, toAccountId=id_account_second,
                                                           amount=transfer_amount)
+        api_manager.user_steps.transfer(create_user_request, account_transfer_request)
 
-        AccountTransferRequester(
-            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
-            response_spec=ResponseSpecs.request_ok()
-        ).post(account_transfer_request)
-
-        response_get_transactions_first = AccountTransactionsRequester(
-            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
-            response_spec=ResponseSpecs.request_ok()
-        ).get(id_account_first)
-
+        response_get_transactions_first = api_manager.user_steps.get_transactions(create_user_request, id_account_first)
         assert response_get_transactions_first.id == id_account_first
         assert response_get_transactions_first.balance == pytest.approx(deposit_amount - transfer_amount)
 
@@ -209,10 +112,8 @@ class TestBankAccount:
         assert deposit.transactionId is not None
         assert deposit.createdAt is not None
 
-        response_get_transactions_second = AccountTransactionsRequester(
-            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
-            response_spec=ResponseSpecs.request_ok()
-        ).get(id_account_second)
+        response_get_transactions_second = api_manager.user_steps.get_transactions(create_user_request,
+                                                                                   id_account_second)
 
         assert response_get_transactions_second.id == id_account_second
         assert response_get_transactions_second.balance == pytest.approx(transfer_amount)
@@ -237,51 +138,23 @@ class TestBankAccount:
             10000,
         ]
     )
-    def test_bank_account_transfer_invalid_insufficient_balance(self, transfer_amount):
-        username = f"Max{uuid.uuid4().hex[:8]}"
+    def test_bank_account_transfer_invalid_insufficient_balance(self, api_manager, create_user_request,
+                                                                transfer_amount):
+        api_manager.admin_steps.login_user(create_user_request)
 
-        create_user_request = CreateUserRequest(username=username, password='Pas!sw0rd', role='ROLE_USER')
-
-        CreateUserRequester(
-            request_spec=RequestSpecs.auth_headers(username='admin', password='123456'),
-            response_spec=ResponseSpecs.request_ok()
-        ).post(create_user_request)
-
-        login_user_request = LoginUserRequest(username=username, password='Pas!sw0rd')
-
-        LoginUserRequester(
-            request_spec=RequestSpecs.unauth_headers(),
-            response_spec=ResponseSpecs.request_ok()
-        ).post(login_user_request)
-
-        response_create_account_first = CreateAccountRequester(
-            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
-            response_spec=ResponseSpecs.requests_created()
-        ).post()
-
+        response_create_account_first = api_manager.user_steps.create_account(create_user_request)
         id_account_first = response_create_account_first.id
         assert id_account_first is not None
 
-        response_create_account_second = CreateAccountRequester(
-            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
-            response_spec=ResponseSpecs.requests_created()
-        ).post()
-
+        response_create_account_second = api_manager.user_steps.create_account(create_user_request)
         id_account_second = response_create_account_second.id
         assert id_account_second is not None
 
         account_transfer_request = AccountTransferRequest(fromAccountId=id_account_first, toAccountId=id_account_second,
                                                           amount=transfer_amount)
+        api_manager.user_steps.transfer_invalid(create_user_request, account_transfer_request)
 
-        AccountTransferRequester(
-            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
-            response_spec=ResponseSpecs.unprocessable_entity()
-        ).post(account_transfer_request)
-
-        account_transfer_response = AccountTransactionsRequester(
-            request_spec=RequestSpecs.auth_headers(username=username, password='Pas!sw0rd'),
-            response_spec=ResponseSpecs.request_ok()
-        ).get(id_account_first)
+        account_transfer_response = api_manager.user_steps.get_transactions(create_user_request, id_account_first)
 
         assert account_transfer_response.balance == 0
         assert len(account_transfer_response.transactions) == 0
