@@ -2,10 +2,14 @@ from pathlib import Path
 from typing import Any
 
 """
-Этот класс нужен для того, чтобы один раз прочитать файл resources/urls.properties
 Singleton
+У меня есть один класс, который один раз в начале программы читает файл
+с настройками и хранит их в памяти — все остальные части кода спрашивают
+у него нужные значения, вместо того чтобы читать файл заново каждый раз.
 В программе всегда существует только один объект.
 """
+
+
 class Config:
     _isinstance = None
     _dictionary = {}
@@ -23,7 +27,7 @@ class Config:
                 for line in f:
                     if "=" in line:
                         key, value = line.split("=")
-                        cls._dictionary[key] = value
+                        cls._dictionary[key] = value.strip()
 
         return cls._isinstance
 

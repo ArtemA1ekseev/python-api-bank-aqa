@@ -52,7 +52,8 @@ class UserSteps(BaseSteps):
         ).post(account_transfer_request)
         return response
 
-    def transfer_invalid(self, create_user_request: CreateUserRequest, account_transfer_request: AccountTransferRequest):
+    def transfer_invalid(self, create_user_request: CreateUserRequest,
+                         account_transfer_request: AccountTransferRequest):
         response = CrudRequester(
             RequestSpecs.auth_headers(username=create_user_request.username, password=create_user_request.password),
             Endpoint.ACCOUNT_TRANSFER,
@@ -68,7 +69,7 @@ class UserSteps(BaseSteps):
         ).post(create_credit_request)
         return response
 
-    def credit_repay(self, create_user_request: CreateUserRequest, credit_repay_request : CreditRepayRequest):
+    def credit_repay(self, create_user_request: CreateUserRequest, credit_repay_request: CreditRepayRequest):
         response = ValidateCrudRequester(
             RequestSpecs.auth_headers(username=create_user_request.username, password=create_user_request.password),
             Endpoint.CREDIT_REPAY,
@@ -76,7 +77,7 @@ class UserSteps(BaseSteps):
         ).post(credit_repay_request)
         return response
 
-    def credit_repay_invalid(self, create_user_request: CreateUserRequest, credit_repay_request : CreditRepayRequest):
+    def credit_repay_invalid(self, create_user_request: CreateUserRequest, credit_repay_request: CreditRepayRequest):
         response = CrudRequester(
             RequestSpecs.auth_headers(username=create_user_request.username, password=create_user_request.password),
             Endpoint.CREDIT_REPAY,

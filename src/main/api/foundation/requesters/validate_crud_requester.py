@@ -21,6 +21,8 @@ ValidateCrudRequester
 
 CreateUserResponse / LoginResponse / AccountResponse
 """
+
+
 class ValidateCrudRequester(HttpRequester):
     def __init__(self, request_spec, endpoint, response_spec):
         super().__init__(request_spec, endpoint, response_spec)
@@ -50,4 +52,3 @@ class ValidateCrudRequester(HttpRequester):
     def get(self, entity_id: Optional[int] = None) -> BaseModel:
         response = self.crud_requester.get(entity_id)
         return self._validate(response)
-
