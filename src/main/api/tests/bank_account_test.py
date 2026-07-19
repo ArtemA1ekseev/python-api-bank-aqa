@@ -1,218 +1,92 @@
-import uuid
-
-import requests
 import pytest
+from sqlalchemy.orm import Session
+
+from src.main.api.configs.classes.api_manager import ApiManager
+from src.main.api.db.crud.account_crud import AccountCrudDb as Account
+from src.main.api.db.crud.transaction_crud import TransactionCrudDb as Transaction
+from src.main.api.models.account_deposit_request import AccountDepositRequest
+from src.main.api.models.account_transfer_request import AccountTransferRequest
+from src.main.api.models.create_user_request import CreateUserRequest
 
 
 @pytest.mark.api
 class TestBankAccount:
     @pytest.mark.parametrize(
         "deposit_amount",
-        [
-            1000,
-            1000.5,
-            5000,
-            9000
-        ]
+        [1000, 1000.5, 5000, 9000]
     )
-    def test_bank_account_deposit_valid(self, deposit_amount):
-        login_admin_response = requests.post(
-            url='http://localhost:4111/api/auth/token/login',
-            json={
-                "username": "admin",
-                "password": "123456"
-            },
-            headers={
-                'accept': 'application/json',
-                'Content-Type': 'application/json'
-            }
-        )
+    def test_bank_account_deposit_valid(self,
+        api_manager: ApiManager,
+        create_user_request: CreateUserRequest,
+        deposit_amount: float,
+        db_session: Session
+    ):
+        api_manager.admin_steps.login_user(create_user_request)
 
-        assert login_admin_response.status_code == 200
-        token_admin = login_admin_response.json().get('token')
-        assert token_admin is not None
+        response_create_account = api_manager.user_steps.create_account(create_user_request)
+        id_account = response_create_account.id
+        assert id_account is not None, 'Счёт не создан, id отсутствует в ответе'
 
-        username = f"Max{uuid.uuid4().hex[:8]}"
+        account_deposit_request = AccountDepositRequest(accountId=id_account, amount=deposit_amount)
+        api_manager.user_steps.account_deposit(create_user_request, account_deposit_request)
 
-        create_user_response = requests.post(
-            url="http://localhost:4111/api/admin/create",
-            json={
-                "username": username,
-                "password": "Pas!sw0rd",
-                "role": "ROLE_USER"
-            },
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f'Bearer {token_admin}'
-            }
-        )
+        response_account_transactions = api_manager.user_steps.get_transactions(create_user_request, id_account)
 
-        assert create_user_response.status_code == 200
-
-        login_user_response = requests.post(
-            url='http://localhost:4111/api/auth/token/login',
-            json={
-                "username": username,
-                "password": "Pas!sw0rd",
-            },
-            headers={
-                'accept': 'application/json',
-                'Content-Type': 'application/json'
-            }
-        )
-
-        assert login_user_response.status_code == 200
-        token_user = login_user_response.json().get('token')
-        assert token_user is not None
-
-        response_create_account = requests.post(
-            url='http://localhost:4111/api/account/create',
-            headers={
-                'accept': 'application/json',
-                "Authorization": f'Bearer {token_user}'
-            }
-        )
-
-        assert response_create_account.status_code == 201
-        id_account = response_create_account.json().get('id')
-        assert id_account is not None
-
-        response_deposit = requests.post(
-            url='http://localhost:4111/api/account/deposit',
-            json={
-                "accountId": id_account,
-                "amount": deposit_amount
-            },
-            headers={
-                'accept': 'application/json',
-                'Authorization': f'Bearer {token_user}',
-                'Content-Type': 'application/json'
-            }
-        )
-
-        assert response_deposit.status_code == 200
-
-        response_get_transaction = requests.get(
-            url=f'http://localhost:4111/api/account/transactions/{id_account}',
-            headers={
-                'accept': 'application/json',
-                'Authorization': f'Bearer {token_user}',
-            }
-        )
-
-        assert response_get_transaction.status_code == 200
-        response_body = response_get_transaction.json()
-        assert response_body["balance"] == deposit_amount
-        transactions = response_body["transactions"]
-        assert len(transactions) == 1
+        assert response_account_transactions.balance == pytest.approx(deposit_amount), \
+            'Баланс счёта после депозита не совпадает с ожидаемой суммой'
+        transactions = response_account_transactions.transactions
+        assert len(transactions) == 1, 'Количество транзакций после депозита не равно 1'
         transaction = transactions[0]
-        assert transaction["type"] == "deposit"
-        assert transaction["amount"] == deposit_amount
-        assert transaction["toAccountId"] == id_account
-        assert transaction["transactionId"] is not None
-        assert transaction["createdAt"] is not None
+        assert transaction.type == "deposit", 'Тип транзакции не соответствует депозиту'
+        assert transaction.amount == pytest.approx(deposit_amount), 'Сумма транзакции не совпадает с суммой депозита'
+        assert transaction.toAccountId == id_account, 'Счёт-получатель транзакции не совпадает с ожидаемым'
+        assert transaction.transactionId is not None, 'ID транзакции отсутствует'
+        assert transaction.createdAt is not None, 'Дата создания транзакции отсутствует'
+
+        account_from_db = Account.get_account_by_id(db_session, id_account)
+        assert account_from_db is not None, 'Счёт не найден в БД'
+        assert account_from_db.balance == pytest.approx(deposit_amount), \
+            'Баланс счёта в БД не совпадает с суммой депозита'
+
+        transactions_from_db = Transaction.get_transactions_by_account_id(db_session, id_account)
+        assert len(transactions_from_db) == 1, 'Количество транзакций в БД не равно 1'
+        assert transactions_from_db[0].transaction_type == "deposit", \
+            'Тип транзакции в БД не соответствует депозиту'
 
     @pytest.mark.parametrize(
         "invalid_amount",
-        [
-            -100,
-            0,
-            1,
-            999,
-            999.99,
-            9001,
-            10000
-        ]
+        [-100, 0, 1, 999, 999.99, 9001, 10000]
     )
-    def test_bank_account_deposit_invalid_amount_below_minimum(self, invalid_amount):
-        login_admin_response = requests.post(
-            url='http://localhost:4111/api/auth/token/login',
-            json={
-                "username": "admin",
-                "password": "123456"
-            },
-            headers={
-                'accept': 'application/json',
-                'Content-Type': 'application/json'
-            }
-        )
+    def test_bank_account_deposit_invalid_amount(
+        self,
+        api_manager: ApiManager,
+        create_user_request: CreateUserRequest,
+        invalid_amount: float,
+        db_session: Session
+    ):
+        api_manager.admin_steps.login_user(create_user_request)
 
-        assert login_admin_response.status_code == 200
-        token_admin = login_admin_response.json().get('token')
-        assert token_admin is not None
+        response_create_account = api_manager.user_steps.create_account(create_user_request)
+        id_account = response_create_account.id
+        assert id_account is not None, 'Счёт не создан, id отсутствует в ответе'
 
-        username = f"Max{uuid.uuid4().hex[:8]}"
+        account_deposit_request = AccountDepositRequest(accountId=id_account, amount=invalid_amount)
+        api_manager.user_steps.account_deposit_invalid(create_user_request, account_deposit_request)
 
-        create_user_response = requests.post(
-            url="http://localhost:4111/api/admin/create",
-            json={
-                "username": username,
-                "password": "Pas!sw0rd",
-                "role": "ROLE_USER"
-            },
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f'Bearer {token_admin}'
-            }
-        )
+        response_account_transactions = api_manager.user_steps.get_transactions(create_user_request, id_account)
 
-        assert create_user_response.status_code == 200
+        assert response_account_transactions.balance == 0, \
+            'Баланс счёта должен остаться равным 0 после отклонённого депозита'
+        assert len(response_account_transactions.transactions) == 0, \
+            'Транзакций быть не должно после отклонённого депозита'
 
-        login_user_response = requests.post(
-            url='http://localhost:4111/api/auth/token/login',
-            json={
-                "username": username,
-                "password": "Pas!sw0rd"
-            },
-            headers={
-                'accept': 'application/json',
-                'Content-Type': 'application/json'
-            }
-        )
+        account_from_db = Account.get_account_by_id(db_session, id_account)
+        assert account_from_db is not None, 'Счёт не найден в БД'
+        assert account_from_db.balance == pytest.approx(0), \
+            'Баланс счёта в БД должен остаться равным 0 после отклонённого депозита'
 
-        assert login_user_response.status_code == 200
-        token_user = login_user_response.json().get('token')
-        assert token_user is not None
-
-        response_create_account = requests.post(
-            url='http://localhost:4111/api/account/create',
-            headers={
-                'accept': 'application/json',
-                "Authorization": f'Bearer {token_user}'
-            }
-        )
-
-        assert response_create_account.status_code == 201
-        id_account = response_create_account.json().get('id')
-        assert id_account is not None
-
-        response_deposit = requests.post(
-            url='http://localhost:4111/api/account/deposit',
-            json={
-                "accountId": id_account,
-                "amount": invalid_amount
-            },
-            headers={
-                'accept': 'application/json',
-                'Authorization': f'Bearer {token_user}',
-                'Content-Type': 'application/json'
-            }
-        )
-
-        assert response_deposit.status_code == 400
-
-        response_get_transaction = requests.get(
-            url=f'http://localhost:4111/api/account/transactions/{id_account}',
-            headers={
-                'accept': 'application/json',
-                'Authorization': f'Bearer {token_user}'
-            }
-        )
-
-        assert response_get_transaction.status_code == 200
-        response_body = response_get_transaction.json()
-        assert response_body["balance"] == 0
-        assert len(response_body["transactions"]) == 0
+        transactions_from_db = Transaction.get_transactions_by_account_id(db_session, id_account)
+        assert len(transactions_from_db) == 0, 'В БД не должно быть транзакций после отклонённого депозита'
 
     @pytest.mark.parametrize(
         "deposit_amount, transfer_amount",
@@ -222,276 +96,125 @@ class TestBankAccount:
             (9000, 9000),
         ]
     )
-    def test_bank_account_transfer_valid(self, deposit_amount, transfer_amount):
-        login_admin_response = requests.post(
-            url='http://localhost:4111/api/auth/token/login',
-            json={
-                "username": "admin",
-                "password": "123456"
-            },
-            headers={
-                'accept': 'application/json',
-                'Content-Type': 'application/json'
-            }
-        )
+    def test_bank_account_transfer_valid(
+        self,
+        api_manager: ApiManager,
+        create_user_request: CreateUserRequest,
+        deposit_amount: float,
+        transfer_amount: float,
+        db_session: Session
+    ):
+        api_manager.admin_steps.login_user(create_user_request)
 
-        assert login_admin_response.status_code == 200
-        token_admin = login_admin_response.json().get('token')
-        assert token_admin is not None
+        response_create_account_first = api_manager.user_steps.create_account(create_user_request)
+        id_account_first = response_create_account_first.id
+        assert id_account_first is not None, 'Первый счёт не создан, id отсутствует в ответе'
 
-        username = f"Max{uuid.uuid4().hex[:8]}"
+        response_create_account_second = api_manager.user_steps.create_account(create_user_request)
+        id_account_second = response_create_account_second.id
+        assert id_account_second is not None, 'Второй счёт не создан, id отсутствует в ответе'
 
-        create_user_response = requests.post(
-            url="http://localhost:4111/api/admin/create",
-            json={
-                "username": username,
-                "password": "Pas!sw0rd",
-                "role": "ROLE_USER"
-            },
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f'Bearer {token_admin}'
-            }
-        )
+        account_deposit_request = AccountDepositRequest(accountId=id_account_first, amount=deposit_amount)
+        api_manager.user_steps.account_deposit(create_user_request, account_deposit_request)
 
-        assert create_user_response.status_code == 200
+        account_transfer_request = AccountTransferRequest(fromAccountId=id_account_first,
+                                                          toAccountId=id_account_second,
+                                                          amount=transfer_amount)
+        api_manager.user_steps.transfer(create_user_request, account_transfer_request)
 
-        login_user_response = requests.post(
-            url='http://localhost:4111/api/auth/token/login',
-            json={
-                "username": username,
-                "password": "Pas!sw0rd",
-            },
-            headers={
-                'accept': 'application/json',
-                'Content-Type': 'application/json'
-            }
-        )
+        response_get_transactions_first = api_manager.user_steps.get_transactions(create_user_request, id_account_first)
+        assert response_get_transactions_first.id == id_account_first, \
+            'ID первого счёта в транзакциях не совпадает с ожидаемым'
+        assert response_get_transactions_first.balance == pytest.approx(deposit_amount - transfer_amount), \
+            'Баланс первого счёта после перевода не совпадает с ожидаемым'
 
-        assert login_user_response.status_code == 200
-        token_user = login_user_response.json().get('token')
-        assert token_user is not None
+        transactions = response_get_transactions_first.transactions
+        assert len(transactions) == 2, 'Количество транзакций первого счёта не равно 2'
 
-        response_create_account_first = requests.post(
-            url='http://localhost:4111/api/account/create',
-            headers={
-                'accept': 'application/json',
-                "Authorization": f'Bearer {token_user}'
-            }
-        )
+        transfer = next(t for t in transactions if t.type == "transfer_out")
+        deposit = next(t for t in transactions if t.type == "deposit")
 
-        assert response_create_account_first.status_code == 201
-        id_account_first = response_create_account_first.json().get('id')
-        assert id_account_first is not None
+        assert transfer.amount == pytest.approx(-transfer_amount), 'Сумма исходящего перевода не совпадает с ожидаемой'
+        assert transfer.fromAccountId == id_account_first, 'Счёт-отправитель перевода не совпадает с ожидаемым'
+        assert transfer.toAccountId == id_account_second, 'Счёт-получатель перевода не совпадает с ожидаемым'
+        assert transfer.transactionId is not None, 'ID транзакции перевода отсутствует'
+        assert transfer.createdAt is not None, 'Дата создания транзакции перевода отсутствует'
 
-        response_create_account_second = requests.post(
-            url='http://localhost:4111/api/account/create',
-            headers={
-                'accept': 'application/json',
-                "Authorization": f'Bearer {token_user}'
-            }
-        )
+        assert deposit.amount == pytest.approx(deposit_amount), 'Сумма депозита не совпадает с ожидаемой'
+        assert deposit.fromAccountId is None, 'Поле fromAccountId должно быть пустым для депозита'
+        assert deposit.toAccountId == id_account_first, 'Счёт-получатель депозита не совпадает с ожидаемым'
+        assert deposit.transactionId is not None, 'ID транзакции депозита отсутствует'
+        assert deposit.createdAt is not None, 'Дата создания транзакции депозита отсутствует'
 
-        assert response_create_account_second.status_code == 201
-        id_account_second = response_create_account_second.json().get('id')
-        assert id_account_second is not None
+        response_get_transactions_second = api_manager.user_steps.get_transactions(create_user_request,
+                                                                                   id_account_second)
 
-        response_deposit = requests.post(
-            url='http://localhost:4111/api/account/deposit',
-            json={
-                "accountId": id_account_first,
-                "amount": deposit_amount
-            },
-            headers={
-                'accept': 'application/json',
-                'Authorization': f'Bearer {token_user}',
-                'Content-Type': 'application/json'
-            }
-        )
+        assert response_get_transactions_second.id == id_account_second, \
+            'ID второго счёта в транзакциях не совпадает с ожидаемым'
+        assert response_get_transactions_second.balance == pytest.approx(transfer_amount), \
+            'Баланс второго счёта после перевода не совпадает с ожидаемым'
 
-        assert response_deposit.status_code == 200
+        transactions = response_get_transactions_second.transactions
+        assert len(transactions) == 1, 'Количество транзакций второго счёта не равно 1'
 
-        response_transfer_accounts = requests.post(
-            url='http://localhost:4111/api/account/transfer',
-            json={
-                "fromAccountId": id_account_first,
-                "toAccountId": id_account_second,
-                "amount": transfer_amount
-            },
-            headers={
-                'accept': 'application/json',
-                'Authorization': f'Bearer {token_user}',
-                'Content-Type': 'application/json'
-            }
-        )
-
-        assert response_transfer_accounts.status_code == 200
-
-        response_get_transaction_first = requests.get(
-            url=f'http://localhost:4111/api/account/transactions/{id_account_first}',
-            headers={
-                'accept': 'application/json',
-                'Authorization': f'Bearer {token_user}',
-            }
-        )
-
-        assert response_get_transaction_first.status_code == 200
-
-        response_body = response_get_transaction_first.json()
-        assert response_body["id"] == id_account_first
-        assert response_body["balance"] == deposit_amount - transfer_amount
-        transactions = response_body["transactions"]
-        assert len(transactions) == 2
-        # flaky (уточнить гарантированный порядок сортировки)
-        transfer = transactions[0]
-        assert transfer["type"] == "transfer_out"
-        assert transfer["amount"] == -transfer_amount
-        assert transfer["fromAccountId"] == id_account_first
-        assert transfer["toAccountId"] == id_account_second
-        assert transfer["creditId"] is None
-        assert transfer["transactionId"] is not None
-        assert transfer["createdAt"] is not None
-        # Предыдущая операция - пополнение
-        deposit = transactions[1]
-        assert deposit["type"] == "deposit"
-        assert deposit["amount"] == deposit_amount
-        assert deposit["fromAccountId"] is None
-        assert deposit["toAccountId"] == id_account_first
-        assert deposit["creditId"] is None
-        assert deposit["transactionId"] is not None
-        assert deposit["createdAt"] is not None
-
-        response_get_transaction_second = requests.get(
-            url=f'http://localhost:4111/api/account/transactions/{id_account_second}',
-            headers={
-                'accept': 'application/json',
-                'Authorization': f'Bearer {token_user}',
-            }
-        )
-
-        assert response_get_transaction_second.status_code == 200
-
-        response_body = response_get_transaction_second.json()
-        assert response_body["id"] == id_account_second
-        assert response_body["balance"] == transfer_amount
-        transactions = response_body["transactions"]
-        assert len(transactions) == 1
         transaction = transactions[0]
-        assert transaction["type"] == "transfer_in"
-        assert transaction["amount"] == transfer_amount
-        assert transaction["fromAccountId"] == id_account_first
-        assert transaction["toAccountId"] == id_account_second
-        assert transaction["creditId"] is None
-        assert transaction["transactionId"] is not None
-        assert transaction["createdAt"] is not None
+        assert transaction.type == "transfer_in", 'Тип транзакции не соответствует входящему переводу'
+        assert transaction.amount == pytest.approx(transfer_amount), 'Сумма входящего перевода не совпадает с ожидаемой'
+        assert transaction.fromAccountId == id_account_first, 'Счёт-отправитель входящего перевода не совпадает'
+        assert transaction.toAccountId == id_account_second, 'Счёт-получатель входящего перевода не совпадает'
+        assert transaction.transactionId is not None, 'ID транзакции входящего перевода отсутствует'
+        assert transaction.createdAt is not None, 'Дата создания транзакции входящего перевода отсутствует'
+
+        account_first_from_db = Account.get_account_by_id(db_session, id_account_first)
+        assert account_first_from_db is not None, 'Первый счёт не найден в БД'
+        assert account_first_from_db.balance == pytest.approx(deposit_amount - transfer_amount), \
+            'Баланс первого счёта в БД не совпадает с ожидаемым'
+
+        account_second_from_db = Account.get_account_by_id(db_session, id_account_second)
+        assert account_second_from_db is not None, 'Второй счёт не найден в БД'
+        assert account_second_from_db.balance == pytest.approx(transfer_amount), \
+            'Баланс второго счёта в БД не совпадает с ожидаемым'
+
+        transactions_first_from_db = Transaction.get_transactions_by_account_id(db_session, id_account_first)
+        assert len(transactions_first_from_db) == 2, 'Количество транзакций первого счёта в БД не равно 2'
 
     @pytest.mark.parametrize(
         "transfer_amount",
-        [
-            500,
-            1000,
-            5000,
-            10000,
-        ]
+        [500, 1000, 5000, 10000]
     )
-    def test_bank_account_transfer_invalid_insufficient_balance(self, transfer_amount):
-        login_admin_response = requests.post(
-            url='http://localhost:4111/api/auth/token/login',
-            json={
-                "username": "admin",
-                "password": "123456"
-            },
-            headers={
-                'accept': 'application/json',
-                'Content-Type': 'application/json'
-            }
-        )
+    def test_bank_account_transfer_invalid_insufficient_balance(
+        self,
+        api_manager: ApiManager,
+        create_user_request: CreateUserRequest,
+        transfer_amount: float,
+        db_session: Session
+    ):
+        api_manager.admin_steps.login_user(create_user_request)
 
-        assert login_admin_response.status_code == 200
-        token_admin = login_admin_response.json().get('token')
-        assert token_admin is not None
+        response_create_account_first = api_manager.user_steps.create_account(create_user_request)
+        id_account_first = response_create_account_first.id
+        assert id_account_first is not None, 'Первый счёт не создан, id отсутствует в ответе'
 
-        username = f"Max{uuid.uuid4().hex[:8]}"
+        response_create_account_second = api_manager.user_steps.create_account(create_user_request)
+        id_account_second = response_create_account_second.id
+        assert id_account_second is not None, 'Второй счёт не создан, id отсутствует в ответе'
 
-        create_user_response = requests.post(
-            url="http://localhost:4111/api/admin/create",
-            json={
-                "username": username,
-                "password": "Pas!sw0rd",
-                "role": "ROLE_USER"
-            },
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f'Bearer {token_admin}'
-            }
-        )
+        account_transfer_request = AccountTransferRequest(fromAccountId=id_account_first,
+                                                          toAccountId=id_account_second,
+                                                          amount=transfer_amount)
+        api_manager.user_steps.transfer_invalid(create_user_request, account_transfer_request)
 
-        assert create_user_response.status_code == 200
+        account_transfer_response = api_manager.user_steps.get_transactions(create_user_request, id_account_first)
 
-        login_user_response = requests.post(
-            url='http://localhost:4111/api/auth/token/login',
-            json={
-                "username": username,
-                "password": "Pas!sw0rd"
-            },
-            headers={
-                'accept': 'application/json',
-                'Content-Type': 'application/json'
-            }
-        )
+        assert account_transfer_response.balance == 0, \
+            'Баланс первого счёта должен остаться равным 0 после отклонённого перевода'
+        assert len(account_transfer_response.transactions) == 0, \
+            'Транзакций быть не должно после отклонённого перевода'
 
-        assert login_user_response.status_code == 200
-        token_user = login_user_response.json().get('token')
-        assert token_user is not None
+        account_first_from_db = Account.get_account_by_id(db_session, id_account_first)
+        assert account_first_from_db is not None, 'Первый счёт не найден в БД'
+        assert account_first_from_db.balance == pytest.approx(0), \
+            'Баланс первого счёта в БД должен остаться равным 0 после отклонённого перевода'
 
-        response_create_account_first = requests.post(
-            url='http://localhost:4111/api/account/create',
-            headers={
-                'accept': 'application/json',
-                "Authorization": f'Bearer {token_user}'
-            }
-        )
-
-        assert response_create_account_first.status_code == 201
-        id_account_first = response_create_account_first.json().get('id')
-        assert id_account_first is not None
-
-        response_create_account_second = requests.post(
-            url='http://localhost:4111/api/account/create',
-            headers={
-                'accept': 'application/json',
-                "Authorization": f'Bearer {token_user}'
-            }
-        )
-
-        assert response_create_account_second.status_code == 201
-        id_account_second = response_create_account_second.json().get('id')
-        assert id_account_second is not None
-
-        response_transfer_accounts = requests.post(
-            url='http://localhost:4111/api/account/transfer',
-            json={
-                "fromAccountId": id_account_first,
-                "toAccountId": id_account_second,
-                "amount": transfer_amount
-            },
-            headers={
-                'accept': 'application/json',
-                'Authorization': f'Bearer {token_user}',
-                'Content-Type': 'application/json'
-            }
-        )
-
-        assert response_transfer_accounts.status_code == 422
-
-        response_get_transaction_first = requests.get(
-            url=f'http://localhost:4111/api/account/transactions/{id_account_first}',
-            headers={
-                'accept': 'application/json',
-                'Authorization': f'Bearer {token_user}'
-            }
-        )
-        assert response_get_transaction_first.status_code == 200
-        response_body = response_get_transaction_first.json()
-        assert response_body["balance"] == 0
-        assert len(response_body["transactions"]) == 0
+        transactions_from_db = Transaction.get_transactions_by_account_id(db_session, id_account_first)
+        assert len(transactions_from_db) == 0, 'В БД не должно быть транзакций после отклонённого перевода'
