@@ -1,7 +1,4 @@
-from sqlite3 import connect
-
 import pytest
-from pygments.styles.dracula import yellow
 
 from src.main.api.db.engine import SessionLocal, engine
 

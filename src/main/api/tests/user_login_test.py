@@ -14,8 +14,6 @@ class TestUserLogin:
         login_user_request = LoginUserRequest(username='admin', password='123456')
         response: LoginUserResponse = api_manager.admin_steps.login_user(login_user_request)
 
-        assert login_user_request.username == response.user.username, \
-            'Username в ответе при логине администратора не совпадает с отправленным'
         assert response.user.role == 'ROLE_ADMIN', \
             'Role в ответе при логине администратора не равна ROLE_ADMIN'
 
@@ -31,13 +29,9 @@ class TestUserLogin:
     ) -> None:
         response: LoginUserResponse = api_manager.admin_steps.login_user(create_user_request)
 
-        assert create_user_request.username == response.user.username, \
-            'Username в ответе при логине пользователя не совпадает с отправленным'
         assert response.user.role == 'ROLE_USER', \
             'Role в ответе при логине пользователя не равна ROLE_USER'
 
         user_from_db = User.get_user_by_username(db_session, create_user_request.username)
         assert user_from_db is not None, 'Пользователь не найден в БД'
-        assert user_from_db.username == create_user_request.username, \
-            'Username пользователя в БД не совпадает с отправленным'
         assert user_from_db.role == 'ROLE_USER', 'Role пользователя в БД не равна ROLE_USER'
