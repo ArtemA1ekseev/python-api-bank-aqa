@@ -2,6 +2,7 @@ import pytest
 
 from src.main.api.generators.model_generator import RandomModelGenerator
 from src.main.api.models.create_user_request import CreateUserRequest
+from src.main.api.models.fixture_data import UserWithAccount, UserWithTwoAccounts
 
 
 @pytest.fixture
@@ -20,30 +21,30 @@ def create_credit_user_request(api_manager):
 
 
 @pytest.fixture
-def logged_user_with_account(api_manager, create_user_request):
+def logged_user_with_account(api_manager, create_user_request) -> UserWithAccount:
     api_manager.admin_steps.login_user(create_user_request)
     account = api_manager.user_steps.create_account(create_user_request)
-    return create_user_request, account
+    return UserWithAccount(user_request=create_user_request, account=account)
 
 
 @pytest.fixture
-def logged_user_with_two_accounts(api_manager, create_user_request):
+def logged_user_with_two_accounts(api_manager, create_user_request) -> UserWithTwoAccounts:
     api_manager.admin_steps.login_user(create_user_request)
     first_account = api_manager.user_steps.create_account(create_user_request)
     second_account = api_manager.user_steps.create_account(create_user_request)
-    return create_user_request, first_account, second_account
+    return UserWithTwoAccounts(user_request=create_user_request, first_account=first_account, second_account=second_account)
 
 
 @pytest.fixture
-def logged_credit_user_with_account(api_manager, create_credit_user_request):
+def logged_credit_user_with_account(api_manager, create_credit_user_request) -> UserWithAccount:
     api_manager.admin_steps.login_user(create_credit_user_request)
     account = api_manager.user_steps.create_account(create_credit_user_request)
-    return create_credit_user_request, account
+    return UserWithAccount(user_request=create_credit_user_request, account=account)
 
 
 @pytest.fixture
-def logged_credit_user_with_two_accounts(api_manager, create_credit_user_request):
+def logged_credit_user_with_two_accounts(api_manager, create_credit_user_request) -> UserWithTwoAccounts:
     api_manager.admin_steps.login_user(create_credit_user_request)
     first_account = api_manager.user_steps.create_account(create_credit_user_request)
     second_account = api_manager.user_steps.create_account(create_credit_user_request)
-    return create_credit_user_request, first_account, second_account
+    return UserWithTwoAccounts(user_request=create_credit_user_request, first_account=first_account, second_account=second_account)
