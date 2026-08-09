@@ -12,6 +12,7 @@ from src.main.api.steps.base_steps import BaseSteps
 
 
 class UserSteps(BaseSteps):
+
     def create_account(self, create_user_request: CreateUserRequest):
         response = ValidateCrudRequester(
             RequestSpecs.auth_headers(username=create_user_request.username, password=create_user_request.password),
